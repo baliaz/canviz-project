@@ -154,7 +154,7 @@ def generate_pdf_report(patient_name, scan_id, date, filename, result, confidenc
         pdf.set_xy(140, y_position)
         pdf.cell(60, 5, "Detection Overlay", align="C")
         pdf.image(ov_path, x=140, y=y_position + 5, w=60)
-    return bytes(pdf.output())
+    return pdf.output(dest='S').encode('latin-1')
 
 def generate_referral_letter(doctor_name, patient_name, scan_id, date, result, confidence, target_hospital, notes):
     pdf = FPDF()
@@ -190,7 +190,7 @@ def generate_referral_letter(doctor_name, patient_name, scan_id, date, result, c
         f"CanViz Medical Command Center"
     )
     pdf.multi_cell(0, 6, body_text)
-    return bytes(pdf.output())
+    return pdf.output(dest='S').encode('latin-1')
 
 # 🌟 FAST UI FRAGMENTS 🌟
 @st.fragment
