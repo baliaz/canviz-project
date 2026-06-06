@@ -4,11 +4,13 @@ import requests
 import re
 import homepage  # dashboard logic
 import chatbot 
+import os
+
+FLASK_URL = os.environ.get("FLASK_URL", "http://127.0.0.1:10000")
 
 # ---------------------
 # CONFIGURATION
 # ---------------------
-FLASK_URL = "http://127.0.0.1:5000"
 st.set_page_config(page_title="CanViz | Medical Auth", layout="wide", page_icon="🏥")
 
 # ---------------------
