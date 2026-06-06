@@ -1,0 +1,8 @@
+streamlit
+supabase
+fpdf
+plotly
+pandas
+matplotlib
+requests
+google-genai
