@@ -1,19 +1,187 @@
+import os
+os.environ['TF_CPP_MIN_LOG_LEVEL'] = '2'
+
 from flask import Flask, jsonify, request
+from flask_cors import CORS  # Prevent browser security blocks
 import smtplib
 from email.message import EmailMessage
 from datetime import datetime
 from werkzeug.security import check_password_hash, generate_password_hash
 from supabase import create_client, Client
 
+# --- AI Data Handling Imports ---
+import io
+import base64
+import numpy as np
+from PIL import Image
+import matplotlib
+matplotlib.use('Agg') # Crucial: Allows generating heatmaps on cloud servers without a monitor
+import matplotlib.cm as cm
+
+# --- PyTorch Backend Brain Imports ---
+import torch
+import torch.nn as nn
+import torch.nn.functional as F
+from torchvision import transforms
+from torchvision.models import resnet50
+
 # 🌟 YOUR SUPABASE CLOUD CREDENTIALS 🌟
-SUPABASE_URL = "https://brzkfyyirszktcfqoowc.supabase.co" # e.g., "https://brzkfyyirszktcfqoowc.supabase.co/rest/v1/"
-SUPABASE_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImJyemtmeXlpcnN6a3RjZnFvb3djIiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc3OTM4NDAxOSwiZXhwIjoyMDk0OTYwMDE5fQ.MPbeYpeA7SVmJ8sFPv3nY-BdlbnWcN5mlgGcvebeZm0" # e.g., "eyJhbG..."
+SUPABASE_URL = "https://brzkfyyirszktcfqoowc.supabase.co" 
+SUPABASE_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImJyemtmeXlpcnN6a3RjZnFvb3djIiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc3OTM4NDAxOSwiZXhwIjoyMDk0OTYwMDE5fQ.MPbeYpeA7SVmJ8sFPv3nY-BdlbnWcN5mlgGcvebeZm0" 
 
 # Initialize the Supabase Client
 supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
 
 app = Flask(__name__)
+CORS(app) # Enable cross-origin requests from your Streamlit portal
 app.json.sort_keys = False 
+
+# =============================================================
+# 🧠 AI MODEL CONFIGURATION & INITIALIZATION
+# =============================================================
+IMG_SIZE = 512
+CLASS_NAMES = [
+    "Blood Cancer - Stage 1", "Blood Cancer - Stage 2", "Blood Cancer - Stage 3",
+    "Breast Cancer", "Colon Cancer", "Kidney Cancer",
+    "Lung Cancer - Stage 1", "Lung Cancer - Stage 2",
+    "Healthy Blood", "Healthy Breast", "Healthy Colon",
+    "Healthy Kidney", "Healthy Lung"
+]
+
+preprocess = transforms.Compose([
+    transforms.Resize(int(IMG_SIZE * 1.08)),
+    transforms.CenterCrop(IMG_SIZE),
+    transforms.ToTensor(),
+    transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
+])
+
+def unnormalize(tensor):
+    mean = torch.tensor([0.485, 0.456, 0.406])[:, None, None]
+    std = torch.tensor([0.229, 0.224, 0.225])[:, None, None]
+    image = tensor.cpu() * std + mean
+    return image.clamp(0, 1).permute(1, 2, 0).numpy()
+
+def build_model(num_classes=13, dropout=0.50):
+    model = resnet50(weights=None)
+    in_features = model.fc.in_features
+    model.fc = nn.Sequential(
+        nn.Dropout(p=dropout),
+        nn.Linear(in_features, 512),
+        nn.BatchNorm1d(512),
+        nn.ReLU(inplace=True),
+        nn.Dropout(p=dropout * 0.5),
+        nn.Linear(512, num_classes),
+    )
+    return model
+
+class GradCAM:
+    def __init__(self, model, target_layer):
+        self.model = model
+        self.target_layer = target_layer
+        self.activations = None
+        self.gradients = None
+        self.forward_hook = target_layer.register_forward_hook(self._save_activation)
+        self.backward_hook = target_layer.register_full_backward_hook(self._save_gradient)
+
+    def _save_activation(self, module, inputs, output):
+        self.activations = output.detach()
+
+    def _save_gradient(self, module, grad_input, grad_output):
+        self.gradients = grad_output[0].detach()
+
+    def __call__(self, image_tensor, class_idx=None):
+        self.model.eval()
+        logits = self.model(image_tensor)
+        probs = F.softmax(logits, dim=1)[0]
+        if class_idx is None: class_idx = int(logits.argmax(dim=1).item())
+        self.model.zero_grad()
+        logits[0, class_idx].backward()
+        weights = self.gradients.mean(dim=(2, 3), keepdim=True)
+        cam = (weights * self.activations).sum(dim=1).squeeze()
+        cam = F.relu(cam)
+        cam = cam - cam.min()
+        cam = cam / (cam.max() + 1e-8)
+        cam = F.interpolate(cam[None, None], size=(IMG_SIZE, IMG_SIZE), mode='bilinear', align_corners=False)[0, 0]
+        return cam.cpu().numpy(), probs.detach().cpu().numpy(), class_idx
+
+def load_assets():
+    device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+    print("Loading AI Model...")
+    try:
+        # NOTE: Make sure this .pth file is pushed to your backend GitHub repo!
+        checkpoint = torch.load("best_resnet50_histopathology_gradcam_classifier1.pth", map_location=device)
+        state_dict = checkpoint['model_state_dict']
+        num_classes = checkpoint.get("num_classes", len(CLASS_NAMES))
+        dropout = checkpoint.get("dropout", 0.50)
+        
+        cnn_model = build_model(num_classes=num_classes, dropout=dropout)
+        cnn_model.load_state_dict(state_dict)
+        cnn_model.to(device)
+        cnn_model.eval()
+        
+        gradcam = GradCAM(cnn_model, cnn_model.layer4[-1])
+        print("AI Model Loaded Successfully!")
+        return cnn_model, gradcam, device
+    except Exception as e:
+        print(f"FAILED TO LOAD MODEL: {e}")
+        return None, None, device
+
+# Load the AI model once when the Flask server starts
+cnn_model, gradcam, compute_device = load_assets()
+
+# =============================================================
+# 🚀 CLOUD AI DIAGNOSTIC ENDPOINT
+# =============================================================
+@app.route('/predict', methods=['POST'])
+def predict():
+    if 'image' not in request.files:
+        return jsonify({"error": "No image file provided in the request"}), 400
+        
+    if not cnn_model or not gradcam:
+        return jsonify({"error": "AI Model failed to load on the server. Check logs."}), 500
+
+    file = request.files['image']
+    try:
+        # Process the incoming image
+        image = Image.open(file.stream).convert("RGB")
+        img_tensor = preprocess(image).unsqueeze(0).to(compute_device)
+
+        # Run Neural Network & Grad-CAM Analysis
+        cam, probs, class_idx = gradcam(img_tensor)
+        confidence = float(probs[class_idx])
+        result = CLASS_NAMES[class_idx]
+
+        # Generate Visualizations
+        display_img = unnormalize(img_tensor[0].cpu())
+        heatmap = cm.jet(cam)[:, :, :3]
+        overlay = np.clip(0.55 * display_img + 0.45 * heatmap, 0, 1)
+
+        # Convert Visualizations to Base64 to transmit across the cloud
+        def img_to_base64(img_array):
+            img_pil = Image.fromarray((img_array * 255).astype(np.uint8))
+            buffered = io.BytesIO()
+            img_pil.save(buffered, format="JPEG")
+            return base64.b64encode(buffered.getvalue()).decode("utf-8")
+
+        heatmap_b64 = img_to_base64(heatmap)
+        overlay_b64 = img_to_base64(overlay)
+
+        # Send everything back to Streamlit
+        return jsonify({
+            "result": result,
+            "confidence": confidence,
+            "heatmap_b64": heatmap_b64,
+            "overlay_b64": overlay_b64
+        }), 200
+
+    except Exception as e:
+        print(f"Prediction Error: {e}")
+        return jsonify({"error": str(e)}), 500
+
+
+# =============================================================
+# ORIGINAL STANDARD FLASK ROUTES BELOW
+# =============================================================
 
 @app.route('/')
 def home():

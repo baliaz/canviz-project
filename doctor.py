@@ -1,6 +1,4 @@
 import os
-os.environ['TF_CPP_MIN_LOG_LEVEL'] = '2'
-
 import streamlit as st
 import pandas as pd
 import requests
@@ -10,24 +8,16 @@ import base64
 import numpy as np
 import math
 from PIL import Image
-import matplotlib.cm as cm
 from fpdf import FPDF
-
 from supabase import create_client, Client
 
-# --- PyTorch & AI Imports ---
-import torch
-import torch.nn as nn
-import torch.nn.functional as F
-from torchvision import transforms
-from torchvision.models import resnet50
+# Safely pull the live API link from Render
+FLASK_URL = os.environ.get("FLASK_URL", "http://127.0.0.1:10000")
 
 # 🌟 YOUR SUPABASE CLOUD CREDENTIALS 🌟
 SUPABASE_URL = "https://brzkfyyirszktcfqoowc.supabase.co" 
 SUPABASE_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImJyemtmeXlpcnN6a3RjZnFvb3djIiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc3OTM4NDAxOSwiZXhwIjoyMDk0OTYwMDE5fQ.MPbeYpeA7SVmJ8sFPv3nY-BdlbnWcN5mlgGcvebeZm0" 
 supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
-
-FLASK_URL = "http://127.0.0.1:5000"
 
 # -------------------------------------------------------------
 # 🌟 HIGH-SPEED API CACHING ENGINE 🌟
@@ -84,53 +74,7 @@ def execute_db_action(action_type, record_id, update_data=None):
     except Exception as e:
         print(f"DB Action Error: {e}")
 
-# -------------------------------------------------------------
-# PYTORCH MODEL BLUEPRINTS & SETUP (UPDATED FOR HIGHER ACCURACY)
-# -------------------------------------------------------------
-def build_model(num_classes=13, dropout=0.50):
-    model = resnet50(weights=None)
-    in_features = model.fc.in_features
-    model.fc = nn.Sequential(
-        nn.Dropout(p=dropout),
-        nn.Linear(in_features, 512),
-        nn.BatchNorm1d(512),
-        nn.ReLU(inplace=True),
-        nn.Dropout(p=dropout * 0.5),
-        nn.Linear(512, num_classes),
-    )
-    return model
-
-class GradCAM:
-    def __init__(self, model, target_layer):
-        self.model = model
-        self.target_layer = target_layer
-        self.activations = None
-        self.gradients = None
-        self.forward_hook = target_layer.register_forward_hook(self._save_activation)
-        self.backward_hook = target_layer.register_full_backward_hook(self._save_gradient)
-
-    def _save_activation(self, module, inputs, output):
-        self.activations = output.detach()
-
-    def _save_gradient(self, module, grad_input, grad_output):
-        self.gradients = grad_output[0].detach()
-
-    def __call__(self, image_tensor, class_idx=None):
-        self.model.eval()
-        logits = self.model(image_tensor)
-        probs = F.softmax(logits, dim=1)[0]
-        if class_idx is None: class_idx = int(logits.argmax(dim=1).item())
-        self.model.zero_grad()
-        logits[0, class_idx].backward()
-        weights = self.gradients.mean(dim=(2, 3), keepdim=True)
-        cam = (weights * self.activations).sum(dim=1).squeeze()
-        cam = F.relu(cam)
-        cam = cam - cam.min()
-        cam = cam / (cam.max() + 1e-8)
-        cam = F.interpolate(cam[None, None], size=(IMG_SIZE, IMG_SIZE), mode='bilinear', align_corners=False)[0, 0]
-        return cam.cpu().numpy(), probs.detach().cpu().numpy(), class_idx
-
-IMG_SIZE = 512
+# Maintain Class Definitions for the UI logic
 CLASS_NAMES = [
     "Blood Cancer - Stage 1", "Blood Cancer - Stage 2", "Blood Cancer - Stage 3",
     "Breast Cancer", "Colon Cancer", "Kidney Cancer",
@@ -139,38 +83,6 @@ CLASS_NAMES = [
     "Healthy Kidney", "Healthy Lung"
 ]
 CANCER_ONLY_CLASSES = [c for c in CLASS_NAMES if "Healthy" not in c]
-
-preprocess = transforms.Compose([
-    transforms.Resize(int(IMG_SIZE * 1.08)),
-    transforms.CenterCrop(IMG_SIZE),
-    transforms.ToTensor(),
-    transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
-])
-
-def unnormalize(tensor):
-    mean = torch.tensor([0.485, 0.456, 0.406])[:, None, None]
-    std = torch.tensor([0.229, 0.224, 0.225])[:, None, None]
-    image = tensor.cpu() * std + mean
-    return image.clamp(0, 1).permute(1, 2, 0).numpy()
-
-@st.cache_resource
-def load_assets():
-    device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-    checkpoint = torch.load("best_resnet50_histopathology_gradcam_classifier1.pth", map_location=device)
-    state_dict = checkpoint['model_state_dict']
-
-    num_classes = checkpoint.get("num_classes", len(CLASS_NAMES))
-    dropout = checkpoint.get("dropout", 0.50)
-    
-    cnn_model = build_model(num_classes=num_classes, dropout=dropout)
-    cnn_model.load_state_dict(state_dict)
-    cnn_model.to(device)
-    cnn_model.eval()
-    
-    gradcam = GradCAM(cnn_model, cnn_model.layer4[-1])
-    return cnn_model, gradcam, device
-
-cnn_model, gradcam, compute_device = load_assets()
 
 def get_base64_image(path):
     try:
@@ -984,11 +896,11 @@ def show_doctor_page():
                 except Exception as e: st.error(f"Error fetching patient data: {e}")
 
     # ==========================================
-    # 🌟 ROUTE: AI DIAGNOSIS
+    # 🌟 ROUTE: AI DIAGNOSIS (NOW CLOUD-POWERED!)
     # ==========================================
     with tab_diagnose:
         st.markdown('<div class="clinical-title">Histopathology Analysis System</div>', unsafe_allow_html=True)
-        st.markdown('<div class="clinical-subtitle">Upload biopsy scan for automated screening and Grad-CAM assessment</div>', unsafe_allow_html=True)
+        st.markdown('<div class="clinical-subtitle">Upload biopsy scan for automated screening and Grad-CAM assessment via Cloud AI Backend</div>', unsafe_allow_html=True)
         
         if 'last_scan_result' in st.session_state:
             ls = st.session_state.last_scan_result
@@ -1059,51 +971,64 @@ def show_doctor_page():
                 with col_action:
                     st.markdown("<h5 style='color: #1e3a8a;'>System Controls</h5>", unsafe_allow_html=True)
                     st.info("✅ Secure connection established. Image ready for screening.")
+                    
                     if st.button("▶ Initialize AI Diagnosis", type="primary", use_container_width=True):
-                        with st.spinner("Processing tissue morphology and analyzing confidence levels..."):
-                            image = Image.open(uploaded_file).convert("RGB")
-                            img_tensor = preprocess(image).unsqueeze(0).to(compute_device)
-                            cam, probs, class_idx = gradcam(img_tensor)
-                            confidence = float(probs[class_idx])
-                            result = CLASS_NAMES[class_idx]
-                            
-                            if confidence < 0.40:
-                                st.error("🛑 **Scan Rejected: Invalid Image Detected**")
-                                st.warning(f"The AI confidence level is too low ({confidence * 100:.1f}%). The system does not recognize this as a valid histopathology medical scan. Please upload a legitimate biopsy image.")
-                            else:
-                                if "Cancer" in result: color, border_color = "#dc2626", "#ef4444"
-                                else: color, border_color = "#16a34a", "#22c55e"
-
-                                display_img = unnormalize(img_tensor[0].cpu())
-                                heatmap = cm.jet(cam)[:, :, :3]
-                                overlay = np.clip(0.55 * display_img + 0.45 * heatmap, 0, 1)
-
-                                scan_id = f"IMG_{int(datetime.datetime.now().timestamp())}"
-                                date_str = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-                                original_filename = uploaded_file.name
+                        with st.spinner("Transmitting to Medical Command Backend for PyTorch Analysis..."):
+                            try:
+                                # We package the file securely and send it to the robust Flask backend
+                                files = {"image": (uploaded_file.name, uploaded_file.getvalue(), "image/jpeg")}
+                                res = requests.post(f"{FLASK_URL}/predict", files=files, timeout=60)
                                 
-                                os.makedirs("uploaded_scans", exist_ok=True)
-                                image.save(f"uploaded_scans/{scan_id}.jpg")
-                                Image.fromarray((heatmap * 255).astype(np.uint8)).save(f"uploaded_scans/{scan_id}_heatmap.jpg")
-                                Image.fromarray((overlay * 255).astype(np.uint8)).save(f"uploaded_scans/{scan_id}_overlay.jpg")
-                                
-                                try:
-                                    supabase.table('history').insert({
-                                        "username": target_patient, "scan_id": scan_id, "date": date_str,
-                                        "result": result, "confidence": f"{confidence*100:.2f}%",
-                                        "status": "Pending", "filename": original_filename
-                                    }).execute()
+                                if res.status_code == 200:
+                                    data = res.json()
+                                    result = data.get("result")
+                                    confidence = float(data.get("confidence", 0))
                                     
-                                    st.session_state.last_scan_result = {
-                                        'target': target_patient,
-                                        'result': result,
-                                        'confidence': confidence,
-                                        'color': color,
-                                        'border_color': border_color,
-                                        'scan_id': scan_id
-                                    }
-                                    st.rerun() 
-                                except Exception as e: st.error(f"Cloud Database error: {e}")
+                                    if confidence < 0.40:
+                                        st.error("🛑 **Scan Rejected: Invalid Image Detected**")
+                                        st.warning(f"The AI confidence level is too low ({confidence * 100:.1f}%). The system does not recognize this as a valid histopathology medical scan.")
+                                    else:
+                                        if "Cancer" in result: color, border_color = "#dc2626", "#ef4444"
+                                        else: color, border_color = "#16a34a", "#22c55e"
+
+                                        scan_id = f"IMG_{int(datetime.datetime.now().timestamp())}"
+                                        date_str = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                                        original_filename = uploaded_file.name
+                                        
+                                        os.makedirs("uploaded_scans", exist_ok=True)
+                                        
+                                        # Save Original Input
+                                        with open(f"uploaded_scans/{scan_id}.jpg", "wb") as f:
+                                            f.write(uploaded_file.getbuffer())
+                                            
+                                        # Decode and save Heatmaps received directly from backend!
+                                        with open(f"uploaded_scans/{scan_id}_heatmap.jpg", "wb") as f:
+                                            f.write(base64.b64decode(data.get("heatmap_b64", "")))
+                                            
+                                        with open(f"uploaded_scans/{scan_id}_overlay.jpg", "wb") as f:
+                                            f.write(base64.b64decode(data.get("overlay_b64", "")))
+                                        
+                                        try:
+                                            supabase.table('history').insert({
+                                                "username": target_patient, "scan_id": scan_id, "date": date_str,
+                                                "result": result, "confidence": f"{confidence*100:.2f}%",
+                                                "status": "Pending", "filename": original_filename
+                                            }).execute()
+                                            
+                                            st.session_state.last_scan_result = {
+                                                'target': target_patient,
+                                                'result': result,
+                                                'confidence': confidence,
+                                                'color': color,
+                                                'border_color': border_color,
+                                                'scan_id': scan_id
+                                            }
+                                            st.rerun() 
+                                        except Exception as e: st.error(f"Cloud Database error: {e}")
+                                else:
+                                    st.error(f"Backend Analysis Failed. Make sure flask_app.py is running! (Error {res.status_code})")
+                            except Exception as e:
+                                st.error(f"Failed to connect to backend AI server: {e}")
 
     # ==========================================
     # ROUTE: PROFILE
