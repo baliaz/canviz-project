@@ -1,0 +1,9 @@
+file,predicted_class,status
+cancer_colon_colon_aca_0042.jpg,error,name 'TYPE_COLORS' is not defined
+cancer_colon_colon_aca_0043.jpg,error,name 'TYPE_COLORS' is not defined
+cancer_lung_lung_aca_0029.jpg,error,name 'TYPE_COLORS' is not defined
+cancer_lung_lung_aca_0049.jpg,error,name 'TYPE_COLORS' is not defined
+healthy_colon_colon_bnt_0024.jpg,error,name 'TYPE_COLORS' is not defined
+healthy_colon_colon_bnt_0026.jpg,error,name 'TYPE_COLORS' is not defined
+healthy_lung_lung_bnt_0019.jpg,error,name 'TYPE_COLORS' is not defined
+healthy_lung_lung_bnt_0023.jpg,error,name 'TYPE_COLORS' is not defined

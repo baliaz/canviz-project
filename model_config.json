@@ -1,0 +1,25 @@
+{
+  "backbone": "resnet50",
+  "cancer_types": [
+    "colon",
+    "lung"
+  ],
+  "embedding_dim": 128,
+  "margin": 1.5,
+  "img_size": 224,
+  "best_threshold": 1.6082979440689087,
+  "roc_auc": 1.0,
+  "overall_acc": 99.74,
+  "per_type": {
+    "colon": {
+      "accuracy": 100.0,
+      "auc": 1.0
+    },
+    "lung": {
+      "accuracy": 99.47,
+      "auc": 1.0
+    }
+  },
+  "device_used": "cuda",
+  "epochs_trained": 25
+}

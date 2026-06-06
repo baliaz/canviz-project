@@ -1,0 +1,26 @@
+{
+  "classes": [
+    "healthy_colon",
+    "cancer_colon",
+    "healthy_lung",
+    "cancer_lung"
+  ],
+  "class2idx": {
+    "healthy_colon": 0,
+    "cancer_colon": 1,
+    "healthy_lung": 2,
+    "cancer_lung": 3
+  },
+  "cancer_types": [
+    "colon",
+    "lung"
+  ],
+  "embedding_dim": 128,
+  "hidden_dim": 256,
+  "num_classes": 4,
+  "img_size": 224,
+  "best_val_acc": 75.0,
+  "overall_acc": 75.0,
+  "device_used": "cuda",
+  "epochs_trained": 40
+}
