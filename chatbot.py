@@ -4,9 +4,13 @@ from google import genai
 from google.genai import types
 from supabase import create_client, Client
 
-# 🌟 YOUR SUPABASE CLOUD CREDENTIALS 🌟
-SUPABASE_URL = "https://brzkfyyirszktcfqoowc.supabase.co" 
-SUPABASE_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImJyemtmeXlpcnN6a3RjZnFvb3djIiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc3OTM4NDAxOSwiZXhwIjoyMDk0OTYwMDE5fQ.MPbeYpeA7SVmJ8sFPv3nY-BdlbnWcN5mlgGcvebeZm0" 
+import os
+from supabase import create_client, Client
+
+# 🌟 SECURE CREDENTIAL FETCHING 🌟
+SUPABASE_URL = os.environ.get("SUPABASE_URL") or st.secrets["SUPABASE_URL"]
+SUPABASE_KEY = os.environ.get("SUPABASE_KEY") or st.secrets["SUPABASE_KEY"]
+
 supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
 
 def show_floating_interface():
